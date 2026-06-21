@@ -3,7 +3,7 @@ import axios from 'axios';
 // Создаем настроенный экземпляр axios
 const api = axios.create({
   // URL твоего запущенного бэкенда .NET. Перепроверь порт (у тебя в launchSettings.json обычно https)
-  baseURL: 'https://localhost:7036', 
+  baseURL: 'https://www.planeta.somee.com', 
   headers: {
     'Content-Type': 'application/json',
   },
