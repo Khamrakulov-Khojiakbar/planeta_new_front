@@ -8,6 +8,7 @@ import Register from '../views/Register.vue'
 import ProductDetails from '../views/ProductDetails.vue' 
 import CreateProduct from '../views/CreateProduct.vue'
 import Cart from '../views/Cart.vue'
+import HomePage from '../views/HomePage.vue'
 
 // Ленивая загрузка для админ-панели
 const AdminOrders = () => import('../views/AdminOrders.vue')
@@ -18,6 +19,11 @@ const router = createRouter({
   routes: [
     {
       path: '/',
+      name: 'homepage',
+      component: HomePage,
+    },
+    {
+      path: '/catalog',
       name: 'catalog',
       component: Catalog,
     },
