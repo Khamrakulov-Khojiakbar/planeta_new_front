@@ -8,21 +8,24 @@ import { useCartStore } from '../stores/cart'
 const router = useRouter()
 const cartStore = useCartStore()
 
-// Состояния
-const products = ref([])
-const categories = ref([])         // Категории первого уровня
-const brands = ref([])             // Бренды для выбранной категории
-const loading = ref(true)
+// ── Состояния ──────────────────────────────
+const products    = ref([])          // используется в режиме "выбрана категория"
+const categories  = ref([])
+const brands      = ref([])
+const loading     = ref(true)
 const searchQuery = ref('')
-const pageNumber = ref(1)
-const pageSize = ref(12)
-const totalPages = ref(1)
-const totalCount = ref(0)
+const pageNumber  = ref(1)
+const pageSize    = ref(12)
+const totalPages  = ref(1)
+const totalCount  = ref(0)
 
-// Выбранные фильтры
-const selectedCategory = ref(null)   // id категории
-const selectedBrand = ref(null)      // id бренда
-const isUsedFilter = ref('')          // состояние товара
+const selectedCategory = ref(null)
+const selectedBrand    = ref(null)
+const isUsedFilter     = ref('')
+
+// ── Режим "обзор по категориям" (когда фильтр не выбран) ──
+const overviewLoading  = ref(true)
+const overviewSections = ref([])     // [{ category, products: [...8] }]
 
 // Корзина
 const cartToast = ref(null)
@@ -33,37 +36,39 @@ const addToCart = (product, event) => {
   cartStore.addItem(product)
   cartToast.value = product.name
   clearTimeout(cartToastTimer)
-  cartToastTimer = setTimeout(() => {
-    cartToast.value = null
-  }, 2500)
+  cartToastTimer = setTimeout(() => { cartToast.value = null }, 2500)
 }
 
-// Загрузка категорий (первый уровень)
+// ── Категории ──────────────────────────────
 const fetchCategories = async () => {
   try {
-    const response = await api.get('/api/getcategories')
-    categories.value = response.data || []
-  } catch (error) {
-    console.error('Ошибка загрузки категорий:', error)
-  }
+    const r = await api.get('/api/getcategories')
+    categories.value = r.data || []
+  } catch (e) { console.error('Ошибка загрузки категорий:', e) }
 }
 
-// Загрузка брендов для выбранной категории
+// Порядок категорий: "Смартфоны" всегда первая, остальные — по алфавиту
+const orderedCategories = computed(() => {
+  const list = [...categories.value]
+  return list.sort((a, b) => {
+    const aIsPhone = /смартфон|телефон/i.test(a.name || '')
+    const bIsPhone = /смартфон|телефон/i.test(b.name || '')
+    if (aIsPhone && !bIsPhone) return -1
+    if (!aIsPhone && bIsPhone) return 1
+    return (a.name || '').localeCompare(b.name || '', 'ru')
+  })
+})
+
+// ── Бренды ─────────────────────────────────
 const fetchBrands = async () => {
-  if (!selectedCategory.value) {
-    brands.value = []
-    return
-  }
+  if (!selectedCategory.value) { brands.value = []; return }
   try {
-    const response = await api.get(`/api/brands/category/${selectedCategory.value}`)
-    brands.value = response.data || []
-  } catch (error) {
-    console.error('Ошибка загрузки брендов:', error)
-    brands.value = []
-  }
+    const r = await api.get(`/api/brands/category/${selectedCategory.value}`)
+    brands.value = r.data || []
+  } catch { brands.value = [] }
 }
 
-// Загрузка товаров с учётом всех фильтров
+// ── Загрузка товаров (режим: выбрана категория / поиск) ──
 const fetchProducts = async () => {
   loading.value = true
   try {
@@ -73,116 +78,140 @@ const fetchProducts = async () => {
       search: searchQuery.value || undefined,
     }
     if (selectedCategory.value) params.categoryId = selectedCategory.value
-    if (selectedBrand.value) params.brandId = selectedBrand.value
-    if (isUsedFilter.value !== '') params.isUsed = isUsedFilter.value === 'true'
+    if (selectedBrand.value)    params.brandId    = selectedBrand.value
+    if (isUsedFilter.value !== '') params.isUsed  = isUsedFilter.value === 'true'
 
-    const response = await api.get('/api/products', { params })
-    const items = response.data.items || response.data.Items || []
-    const count = response.data.totalCount ?? response.data.TotalCount ?? items.length
-    const pages = response.data.totalPages ?? response.data.TotalPages ?? Math.ceil(count / pageSize.value)
-    const currentPage = response.data.pageNumber ?? response.data.PageNumber ?? pageNumber.value
+    const r     = await api.get('/api/products', { params })
+    const items = r.data.items || r.data.Items || []
+    const count = r.data.totalCount ?? r.data.TotalCount ?? items.length
+    const pages = r.data.totalPages ?? r.data.TotalPages ?? Math.ceil(count / pageSize.value)
+    const cur   = r.data.pageNumber ?? r.data.PageNumber ?? pageNumber.value
 
-    products.value = items
+    products.value   = items
     totalCount.value = count
     totalPages.value = pages
-    pageNumber.value = currentPage
-  } catch (error) {
-    console.error('Ошибка загрузки товаров:', error)
+    pageNumber.value = cur
+  } catch (e) {
+    console.error('Ошибка загрузки товаров:', e)
     products.value = []
   } finally {
     loading.value = false
   }
 }
 
-// Группировка по категориям с сортировкой товаров внутри по алфавиту
-const groupedProducts = computed(() => {
-  const sorted = [...products.value].sort((a, b) =>
-    (a.name || '').localeCompare(b.name || '', 'ru')
-  )
+// Товары текущей страницы, отсортированные по алфавиту
+const sortedProducts = computed(() =>
+  [...products.value].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'))
+)
 
-  const groups = {}
+// ── Загрузка "обзора" по всем категориям (по 8 штук каждая) ──
+const fetchOverview = async () => {
+  overviewLoading.value = true
+  try {
+    if (categories.value.length === 0) await fetchCategories()
 
-  sorted.forEach(product => {
-    const category = product.categoryName || 'Без категории'
+    const results = await Promise.all(
+      orderedCategories.value.map(async (cat) => {
+        try {
+          const r = await api.get('/api/products', {
+            params: { pageNumber: 1, pageSize: 8, categoryId: cat.id }
+          })
+          const items = r.data.items || r.data.Items || []
+          const count = r.data.totalCount ?? r.data.TotalCount ?? items.length
+          const sortedItems = [...items].sort((a, b) =>
+            (a.name || '').localeCompare(b.name || '', 'ru')
+          )
+          return { category: cat, products: sortedItems, totalCount: count }
+        } catch {
+          return { category: cat, products: [], totalCount: 0 }
+        }
+      })
+    )
 
-    if (!groups[category]) {
-      groups[category] = []
-    }
-
-    groups[category].push(product)
-  })
-
-  return groups
-})
-
-// Выбор категорий (с поддержкой "Все категории" при id === null)
-const selectCategory = (categoryId) => {
-  if (categoryId === null || selectedCategory.value === categoryId) {
-    selectedCategory.value = null
-    selectedBrand.value = null
-    brands.value = []
-  } else {
-    selectedCategory.value = categoryId
-    selectedBrand.value = null        // Очищаем бренд при смене категории
-    fetchBrands()                      // Загружаем новые бренды
+    overviewSections.value = results.filter(s => s.products.length > 0)
+  } finally {
+    overviewLoading.value = false
   }
-  pageNumber.value = 1
-  fetchProducts()
 }
 
-// Выбор бренда (сброс при повторном клике на ту же карточку)
-const selectBrand = (brandId) => {
-  if (selectedBrand.value === brandId) {
-    selectedBrand.value = null        // Если кликнули повторно — сбрасываем фильтр бренда
+// ── Режим: есть ли активный фильтр/поиск? ──
+const isFiltering = computed(() =>
+  !!(selectedCategory.value || selectedBrand.value || isUsedFilter.value || searchQuery.value)
+)
+
+// ── Выбор категории ────────────────────────
+const selectCategory = (catId) => {
+  if (catId === null || selectedCategory.value === catId) {
+    selectedCategory.value = null
+    selectedBrand.value    = null
+    brands.value           = []
   } else {
-    selectedBrand.value = brandId
+    selectedCategory.value = catId
+    selectedBrand.value    = null
+    fetchBrands()
   }
+  pageNumber.value = 1
+
+  if (selectedCategory.value || searchQuery.value || isUsedFilter.value) {
+    fetchProducts()
+  }
+}
+
+const selectBrand = (brandId) => {
+  selectedBrand.value = selectedBrand.value === brandId ? null : brandId
   pageNumber.value = 1
   fetchProducts()
 }
 
 const resetFilters = () => {
   selectedCategory.value = null
-  selectedBrand.value = null
-  isUsedFilter.value = ''
-  searchQuery.value = ''
-  pageNumber.value = 1
-  brands.value = []
-  fetchProducts()
+  selectedBrand.value    = null
+  isUsedFilter.value     = ''
+  searchQuery.value      = ''
+  pageNumber.value       = 1
+  brands.value           = []
 }
 
-// Таймер для задержки поиска (Debounce)
-let searchTimeout = null
+// Клик "Показать все" в секции обзора — переключает в режим категории
+const showAllInCategory = (catId) => {
+  selectCategory(catId)
+}
 
-// Наблюдаем за вводом текста с задержкой в 500мс, чтобы не перегружать бэкенд
+// ── Поиск / дебаунс ────────────────────────
+let searchTimeout = null
 watch(searchQuery, () => {
   clearTimeout(searchTimeout)
   searchTimeout = setTimeout(() => {
     pageNumber.value = 1
-    fetchProducts()
+    if (searchQuery.value) fetchProducts()
   }, 500)
 })
 
-// Сброс при смене состояния "Б/У" или размера страницы происходит мгновенно
 watch([isUsedFilter, pageSize], () => {
   pageNumber.value = 1
-  fetchProducts()
+  if (isFiltering.value) fetchProducts()
 })
 
-// Принудительный мгновенный поиск при клике на лупу или нажатии Enter
 const handleSearchSubmit = () => {
   clearTimeout(searchTimeout)
   pageNumber.value = 1
-  fetchProducts()
+  if (searchQuery.value) fetchProducts()
 }
 
-// Пагинация
+// Когда фильтрация выключается полностью (resetFilters) — возвращаемся к обзору,
+// который уже загружен; когда включается — подгружаем список
+watch(isFiltering, (filtering) => {
+  if (!filtering) {
+    // вернулись к обзору — ничего грузить не нужно, он уже в памяти
+  }
+})
+
+// ── Пагинация ──────────────────────────────
 const pageNumbers = computed(() => {
   const pages = []
-  const max = totalPages.value
-  const current = pageNumber.value
-  let start = Math.max(1, current - 2)
-  let end = Math.min(max, start + 4)
+  const max = totalPages.value, cur = pageNumber.value
+  let start = Math.max(1, cur - 2)
+  let end   = Math.min(max, start + 4)
   start = Math.max(1, end - 4)
   for (let i = start; i <= end; i++) pages.push(i)
   return pages
@@ -195,724 +224,564 @@ const goToPage = (page) => {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-// Инициализация
+const currentCategoryName = computed(() => {
+  if (!selectedCategory.value) return 'Все товары'
+  const c = categories.value.find(c => c.id === selectedCategory.value)
+  return c?.name || 'Категория'
+})
+
+const formatPrice = (p) => Number(p).toLocaleString('ru-RU')
+
+const getCatIcon = (name = '') => {
+  const n = name.toLowerCase()
+  if (n.includes('смартфон') || n.includes('телефон')) return '📱'
+  if (n.includes('заряд'))                              return '⚡'
+  if (n.includes('стекл') || n.includes('защит'))      return '🛡️'
+  if (n.includes('аудио') || n.includes('наушн'))      return '🎧'
+  if (n.includes('час') || n.includes('watch'))        return '⌚'
+  if (n.includes('дом') || n.includes('home'))         return '🏠'
+  return '📦'
+}
+
+// ── Инициализация ──────────────────────────
 onMounted(async () => {
   await fetchCategories()
-  await fetchProducts()
+  await fetchOverview()
+  loading.value = false
 })
 </script>
 
 <template>
   <div class="catalog-view">
-    <div class="search-filter">
-      <input 
-        v-model="searchQuery"
-        type="search" 
-        placeholder="Поиск по названию или совместимости..."
-        @keyup.enter="handleSearchSubmit"
-        class="search-input"
-      />
-      <button @click="handleSearchSubmit" class="search-btn">🔍</button>
-    </div>
 
-    <div class="categories-menu">
-      <div class="categories-scroll">
-        <button
-          class="category-chip"
-          :class="{ active: selectedCategory === null }"
-          @click="selectCategory(null)"
-        >
-          Все категории
-        </button>
-        <button
-          v-for="cat in categories"
-          :key="cat.id"
-          class="category-chip"
-          :class="{ active: selectedCategory === cat.id }"
-          @click="selectCategory(cat.id)"
-        >
-          {{ cat.name }}
-        </button>
+    <!-- ═══════════════ ПОИСК ═══════════════ -->
+    <div class="search-bar">
+      <div class="search-wrap">
+        <span class="search-icon-left">🔍</span>
+        <input
+          v-model="searchQuery"
+          type="search"
+          placeholder="Поиск товаров..."
+          @keyup.enter="handleSearchSubmit"
+          class="search-input"
+        />
+        <button v-if="searchQuery" @click="searchQuery = ''" class="search-clear">✕</button>
       </div>
     </div>
 
-    <div v-if="selectedCategory && brands.length > 0" class="brands-menu">
-      <h5 class="brands-title">Бренды категории:</h5>
-      <div class="brands-scroll">
-        <button
-          v-for="brand in brands"
-          :key="brand.id || brand.brandId"
-          class="brand-card"
-          :class="{ active: selectedBrand === (brand.id ?? brand.brandId) }"
-          @click="selectBrand(brand.id ?? brand.brandId)"
-        >
-          <div class="brand-image-wrapper">
-            <img 
-              v-if="brand.logoUrl || brand.imageUrl"
-              :src="getFullImageUrl(brand.logoUrl || brand.imageUrl)" 
-              :alt="brand.name || brand.brandName"
-              class="brand-logo-img"
-            />
-            <div v-else class="brand-logo-text-fallback">
-              {{ (brand.name || brand.brandName || '?').substring(0, 2).toUpperCase() }}
-            </div>
-          </div>
-          <span class="brand-name">{{ brand.name || brand.brandName }}</span>
-        </button>
-      </div>
-    </div>
-
-    <div class="filters-bar">
-      <div class="filter-group">
-        <label>Состояние:</label>
-        <select v-model="isUsedFilter" class="state-filter">
-          <option value="">Любое</option>
-          <option value="false">Новый</option>
-          <option value="true">Б/У</option>
-        </select>
-        <span class="result-count">{{ totalCount }} товаров</span>
-      </div>
-      <button v-if="selectedCategory || selectedBrand || isUsedFilter || searchQuery" 
-              @click="resetFilters" 
-              class="reset-all-btn">
-        ✕ Сбросить все фильтры
+    <!-- ═══════════════ КАТЕГОРИИ (TAB-BAR) ══════════════ -->
+    <div class="cat-tabbar">
+      <button
+        class="cat-tab"
+        :class="{ active: selectedCategory === null && !isFiltering }"
+        @click="resetFilters()"
+      >
+        <span class="tab-icon">🏪</span>
+        <span class="tab-label">Все</span>
+      </button>
+      <button
+        v-for="cat in orderedCategories"
+        :key="cat.id"
+        class="cat-tab"
+        :class="{ active: selectedCategory === cat.id }"
+        @click="selectCategory(cat.id)"
+      >
+        <span class="tab-icon">{{ getCatIcon(cat.name) }}</span>
+        <span class="tab-label">{{ cat.name }}</span>
       </button>
     </div>
 
-    <div v-if="loading" class="products-grid">
-      <div v-for="n in 12" :key="n" class="product-skeleton">
-        <div class="skeleton-img"></div>
-        <div class="skeleton-line"></div>
-        <div class="skeleton-line short"></div>
-      </div>
-    </div>
-
-    <div v-else-if="products.length === 0" class="empty-state">
-      <div class="empty-icon">📦</div>
-      <h3>Товары не найдены</h3>
-      <p>Попробуйте изменить фильтры или ввести другой поисковый запрос</p>
-      <button @click="resetFilters" class="btn-empty">Сбросить фильтры</button>
-    </div>
-
-    <div v-else class="catalog-groups">
-      <div v-for="(groupProducts, categoryName) in groupedProducts" :key="categoryName" class="category-group-section">
-        
-        <h3 class="category-group-title">
-          {{ categoryName }} 
-          <span class="category-group-count">({{ groupProducts.length }})</span>
-        </h3>
-
-        <div class="products-grid">
-          <div
-            v-for="product in groupProducts"
-            :key="product.id"
-            class="product-card"
+    <!-- ═══════════════ БРЕНДЫ (только в режиме категории) ══════════════ -->
+    <transition name="slide-down">
+      <div v-if="selectedCategory && brands.length > 0" class="brands-panel">
+        <span class="brands-label">Бренд:</span>
+        <div class="brands-list">
+          <button
+            v-for="brand in brands"
+            :key="brand.id || brand.brandId"
+            class="brand-pill"
+            :class="{ active: selectedBrand === (brand.id ?? brand.brandId) }"
+            @click="selectBrand(brand.id ?? brand.brandId)"
           >
-            <div class="product-img-wrapper">
-              <img 
-                :src="getFullImageUrl(product.mainImageUrl || product.imageUrls?.[0])"
-                :alt="product.name"
-                class="product-img"
-              />
-              <div class="product-badges">
-                <span v-if="product.isUsed" class="badge used">Б/У</span>
-                <span v-else class="badge new">NEW</span>
-              </div>
-              <button 
-                @click.stop="addToCart(product, $event)"
-                class="quick-add"
-              >
-                🛒 В корзину
-              </button>
-            </div>
-            <div class="product-info">
-              <div class="product-brand">{{ product.brandName || 'Бренд' }}</div>
-              <h4 class="product-title">{{ product.name }}</h4>
-              <div v-if="product.attributes?.length" class="product-specs">
-                <div v-for="(attr, idx) in product.attributes.slice(0, 2)" :key="idx" class="spec">
-                  <span class="spec-label">{{ attr.attributeName }}:</span>
-                  <span>{{ attr.value }}</span>
-                </div>
-              </div>
-              <div class="product-price">
-                <span class="price">{{ Number(product.price).toLocaleString() }}</span>
-                <span class="currency">сом</span>
-              </div>
-              <button 
-                @click.stop="router.push(`/products/${product.id}`)"
-                class="details-btn"
-              >
-                Подробнее
-              </button>
+            <img
+              v-if="brand.logoUrl || brand.imageUrl"
+              :src="getFullImageUrl(brand.logoUrl || brand.imageUrl)"
+              :alt="brand.name || brand.brandName"
+              class="brand-pill-logo"
+            />
+            <span class="brand-pill-fallback" v-else>
+              {{ (brand.name || brand.brandName || '?').substring(0,2).toUpperCase() }}
+            </span>
+            {{ brand.name || brand.brandName }}
+          </button>
+        </div>
+      </div>
+    </transition>
+
+    <!-- ════════════════════════════════════════════════════════ -->
+    <!-- РЕЖИМ A: ОБЗОР ПО КАТЕГОРИЯМ (фильтр/поиск не активны)   -->
+    <!-- ════════════════════════════════════════════════════════ -->
+    <template v-if="!isFiltering">
+
+      <div v-if="overviewLoading" class="overview-skeleton">
+        <div v-for="n in 3" :key="n" class="section-skeleton">
+          <div class="sk-title"></div>
+          <div class="products-grid">
+            <div v-for="m in 8" :key="m" class="skeleton-card">
+              <div class="sk-img"></div>
+              <div class="sk-line"></div>
+              <div class="sk-line short"></div>
             </div>
           </div>
         </div>
-
       </div>
-    </div>
 
-    <div v-if="totalPages > 1" class="pagination">
-      <button 
-        class="page-btn prev"
-        :disabled="pageNumber <= 1"
-        @click="goToPage(pageNumber - 1)"
-      >← Назад</button>
-      <div class="page-numbers">
-        <button 
-          v-for="p in pageNumbers" 
-          :key="p"
-          :class="['page-number', { active: p === pageNumber }]"
+      <div v-else-if="overviewSections.length === 0" class="empty-state">
+        <div class="empty-icon">📦</div>
+        <h3>Каталог пуст</h3>
+        <p>Товары скоро появятся</p>
+      </div>
+
+      <div v-else class="overview-list">
+        <section
+          v-for="section in overviewSections"
+          :key="section.category.id"
+          class="catalog-section"
+        >
+          <div class="section-header">
+            <div class="section-header-left">
+              <span class="section-icon">{{ getCatIcon(section.category.name) }}</span>
+              <h2 class="section-title">{{ section.category.name }}</h2>
+              <span class="count-badge">{{ section.totalCount }}</span>
+            </div>
+            <button
+              v-if="section.totalCount > 8"
+              class="show-all-btn"
+              @click="showAllInCategory(section.category.id)"
+            >
+              Показать все →
+            </button>
+          </div>
+
+          <div class="products-grid">
+            <div
+              v-for="product in section.products"
+              :key="product.id"
+              class="product-card"
+              @click="router.push(`/products/${product.id}`)"
+            >
+              <div class="card-img-wrap">
+                <img
+                  :src="getFullImageUrl(product.mainImageUrl || product.imageUrls?.[0])"
+                  :alt="product.name"
+                  class="card-img"
+                />
+                <div class="card-badges">
+                  <span v-if="product.isUsed" class="badge used">Б/У</span>
+                  <span v-else class="badge new">NEW</span>
+                </div>
+                <button @click.stop="addToCart(product, $event)" class="quick-add">
+                  🛒 В корзину
+                </button>
+              </div>
+              <div class="card-info">
+                <span class="card-brand">{{ product.brandName || 'Бренд' }}</span>
+                <h4 class="card-name">{{ product.name }}</h4>
+                <div class="card-price">
+                  <strong>{{ formatPrice(product.price) }}</strong>
+                  <span class="cur"> сом</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    </template>
+
+    <!-- ════════════════════════════════════════════════════════ -->
+    <!-- РЕЖИМ B: ВЫБРАНА КАТЕГОРИЯ / ПОИСК (список + пагинация)  -->
+    <!-- ════════════════════════════════════════════════════════ -->
+    <template v-else>
+
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <h2 class="section-heading">{{ currentCategoryName }}</h2>
+          <span class="count-badge">{{ totalCount }}</span>
+        </div>
+        <div class="toolbar-right">
+          <select v-model="isUsedFilter" class="state-select">
+            <option value="">Любое состояние</option>
+            <option value="false">Новый</option>
+            <option value="true">Б/У</option>
+          </select>
+          <button @click="resetFilters" class="reset-btn">✕ Сброс</button>
+        </div>
+      </div>
+
+      <div v-if="loading" class="products-grid">
+        <div v-for="n in 12" :key="n" class="skeleton-card">
+          <div class="sk-img"></div>
+          <div class="sk-line"></div>
+          <div class="sk-line short"></div>
+        </div>
+      </div>
+
+      <div v-else-if="sortedProducts.length === 0" class="empty-state">
+        <div class="empty-icon">📦</div>
+        <h3>Товары не найдены</h3>
+        <p>Попробуйте изменить фильтры или поисковый запрос</p>
+        <button @click="resetFilters" class="btn-reset-empty">Сбросить фильтры</button>
+      </div>
+
+      <div v-else class="products-grid">
+        <div
+          v-for="product in sortedProducts"
+          :key="product.id"
+          class="product-card"
+          @click="router.push(`/products/${product.id}`)"
+        >
+          <div class="card-img-wrap">
+            <img
+              :src="getFullImageUrl(product.mainImageUrl || product.imageUrls?.[0])"
+              :alt="product.name"
+              class="card-img"
+            />
+            <div class="card-badges">
+              <span v-if="product.isUsed" class="badge used">Б/У</span>
+              <span v-else class="badge new">NEW</span>
+            </div>
+            <button @click.stop="addToCart(product, $event)" class="quick-add">
+              🛒 В корзину
+            </button>
+          </div>
+          <div class="card-info">
+            <span class="card-brand">{{ product.brandName || 'Бренд' }}</span>
+            <h4 class="card-name">{{ product.name }}</h4>
+            <div v-if="product.attributes?.length" class="card-specs">
+              <div v-for="(attr, idx) in product.attributes.slice(0, 2)" :key="idx" class="spec-row">
+                <span class="spec-key">{{ attr.attributeName }}:</span>
+                <span class="spec-val">{{ attr.value }}</span>
+              </div>
+            </div>
+            <div class="card-price">
+              <strong>{{ formatPrice(product.price) }}</strong>
+              <span class="cur"> сом</span>
+            </div>
+            <button @click.stop="router.push(`/products/${product.id}`)" class="details-btn">
+              Подробнее
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="totalPages > 1" class="pagination">
+        <button class="pg-btn" :disabled="pageNumber <= 1" @click="goToPage(pageNumber - 1)">← Назад</button>
+        <button
+          v-for="p in pageNumbers" :key="p"
+          :class="['pg-num', { active: p === pageNumber }]"
           @click="goToPage(p)"
         >{{ p }}</button>
+        <button class="pg-btn" :disabled="pageNumber >= totalPages" @click="goToPage(pageNumber + 1)">Вперёд →</button>
       </div>
-      <button 
-        class="page-btn next"
-        :disabled="pageNumber >= totalPages"
-        @click="goToPage(pageNumber + 1)"
-      >Вперёд →</button>
-    </div>
 
+    </template>
+
+    <!-- ═══════════════ TOAST ══════════════ -->
     <transition name="toast">
       <div v-if="cartToast" class="cart-toast">
-        <span class="toast-icon">✓</span>
-        <div class="toast-text">
+        <span class="toast-check">✓</span>
+        <div class="toast-body">
           <strong>Добавлено в корзину</strong>
           <p>{{ cartToast }}</p>
         </div>
-        <router-link to="/cart" class="toast-link">Перейти в корзину →</router-link>
+        <router-link to="/cart" class="toast-link">Перейти →</router-link>
       </div>
     </transition>
+
   </div>
 </template>
 
 <style scoped>
+/* ── BASE ── */
 .catalog-view {
   width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-.search-filter {
-  display: flex;
-  gap: 12px;
-  margin: 0 auto 20px auto; 
-  max-width: 500px;
-  width: 100%;
-}
+/* ── ПОИСК ── */
+.search-bar { margin: 0 auto 28px; max-width: 560px; }
+.search-wrap { position: relative; display: flex; align-items: center; }
+.search-icon-left { position: absolute; left: 16px; font-size: 16px; pointer-events: none; opacity: .55; }
 .search-input {
-  flex: 1;
-  padding: 12px 18px;
-  border: 1px solid #e0e0e0;
-  border-radius: 12px;
+  width: 100%;
+  padding: 14px 48px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 16px;
   font-size: 15px;
-  transition: 0.2s;
+  background: #fff;
+  transition: .2s;
+  box-sizing: border-box;
 }
 .search-input:focus {
   outline: none;
-  border-color: #1a1a1a;
-  box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.1);
+  border-color: #111;
+  box-shadow: 0 0 0 3px rgba(17,17,17,.07);
 }
-.search-btn {
-  background: #1a1a1a;
-  border: none;
-  padding: 0 24px;
-  border-radius: 12px;
-  color: white;
-  cursor: pointer;
-  font-size: 18px;
-  transition: 0.2s;
+.search-clear {
+  position: absolute; right: 14px;
+  background: none; border: none;
+  font-size: 14px; color: #94a3b8; cursor: pointer; padding: 4px;
 }
-.search-btn:hover {
-  background: #000;
-}
+.search-clear:hover { color: #111; }
 
-.categories-menu {
-  margin-bottom: 24px;
-  border-bottom: 1px solid #eaeaea;
-  padding-bottom: 14px;
+/* ── КАТЕГОРИИ — TAB BAR ── */
+.cat-tabbar {
+  display: flex;
+  gap: 8px;
   overflow-x: auto;
-}
-.categories-scroll {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: center; 
-}
-.category-chip {
-  background: #f5f5f5;
-  border: 1px solid transparent;
-  padding: 10px 22px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #4a4a4a;
-  border-radius: 40px;
-  cursor: pointer;
-  transition: all 0.25s ease;
-  white-space: nowrap;
-}
-.category-chip:hover {
-  background: #e0e0e0;
-  color: #1a1a1a;
-}
-.category-chip.active {
-  background: #1a1a1a;
-  color: white;
-}
-
-.brands-menu {
-  margin-bottom: 28px;
-  background: #fafafa;
-  padding: 16px;
-  border-radius: 20px;
-  border: 1px solid #f0f0f0;
-  display: flex;
-  flex-direction: column;
-  align-items: center; 
-}
-.brands-title {
-  margin: 0 0 14px 0;
-  font-size: 13px;
-  font-weight: 700;
-  color: #777;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  text-align: center;
-}
-.brands-scroll {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: center; 
-  width: 100%;
-}
-.brand-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: white;
-  border: 1px solid #e2e8f0;
-  padding: 12px;
-  width: 96px;
-  min-width: 96px;
-  height: 96px;
-  border-radius: 16px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.brand-card:hover {
-  border-color: #1a1a1a;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-}
-.brand-card.active {
-  border-color: #1a1a1a;
-  background: #ffffff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  outline: 2px solid #1a1a1a;
-}
-.brand-image-wrapper {
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-.brand-logo-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-.brand-logo-text-fallback {
-  width: 100%;
-  height: 100%;
-  background: #f1f5f9;
-  color: #64748b;
-  font-size: 14px;
-  font-weight: 700;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.brand-name {
-  font-size: 11px;
-  font-weight: 600;
-  color: #1a1a1a;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
-}
-
-.filters-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-bottom: 24px;
-  flex-wrap: wrap;
-  gap: 16px;
+  scrollbar-width: none;
+  border-bottom: 2px solid #f1f5f9;
+  padding-bottom: 16px;
 }
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.filter-group label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #555;
-}
-.state-filter {
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 30px;
-  background: white;
-  font-size: 13px;
+.cat-tabbar::-webkit-scrollbar { display: none; }
+.cat-tab {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 20px;
+  border: 1.5px solid #e8ecf0;
+  border-radius: 16px;
+  background: #fff;
   cursor: pointer;
+  transition: .2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 80px;
 }
-.reset-all-btn {
+.cat-tab:hover { border-color: #111; background: #f8fafc; }
+.cat-tab.active { background: #111; border-color: #111; color: #fff; }
+.tab-icon { font-size: 22px; line-height: 1; }
+.tab-label { font-size: 12px; font-weight: 700; letter-spacing: .2px; }
+
+/* ── БРЕНДЫ ── */
+.brands-panel {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: #f8fafc;
+  border: 1px solid #e8ecf0;
+  border-radius: 18px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+}
+.brands-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: #94a3b8; flex-shrink: 0; }
+.brands-list { display: flex; gap: 8px; flex-wrap: wrap; }
+.brand-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 40px;
+  padding: 7px 14px;
+  font-size: 13px; font-weight: 600; color: #374151;
+  cursor: pointer; transition: .2s;
+}
+.brand-pill:hover { border-color: #111; }
+.brand-pill.active { background: #111; color: #fff; border-color: #111; }
+.brand-pill-logo { width: 18px; height: 18px; object-fit: contain; }
+.brand-pill-fallback {
+  width: 20px; height: 20px; background: #e2e8f0; border-radius: 50%;
+  font-size: 9px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; color: #64748b;
+}
+
+/* ── ОБЗОРНЫЙ РЕЖИМ: СЕКЦИИ ПО КАТЕГОРИЯМ ── */
+.overview-list { display: flex; flex-direction: column; gap: 48px; }
+.catalog-section { width: 100%; }
+.section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap; gap: 10px;
+}
+.section-header-left { display: flex; align-items: center; gap: 10px; }
+.section-icon { font-size: 22px; }
+.section-title { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0; }
+.count-badge {
+  background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 700;
+  padding: 3px 10px; border-radius: 40px;
+}
+.show-all-btn {
   background: none;
-  border: 1px solid #ddd;
-  padding: 6px 14px;
-  border-radius: 30px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: 0.2s;
-}
-.reset-all-btn:hover {
-  background: #f0f0f0;
-  border-color: #1a1a1a;
-}
-
-.result-count {
-  font-size: 14px;
-  color: #6b6b6b;
-  font-weight: 500;
-}
-
-/* Стили для структуры групп */
-.catalog-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 40px;
-  width: 100%;
-}
-.category-group-section {
-  width: 100%;
-}
-.category-group-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1a1a1a;
-  margin-bottom: 18px;
-  border-left: 4px solid #1a1a1a;
-  padding-left: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.category-group-count {
-  font-size: 14px;
-  color: #888;
-  font-weight: 500;
-}
-
-.products-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 24px;
-  margin-bottom: 10px;
-}
-.product-card {
-  background: #fff;
-  border-radius: 20px;
-  overflow: hidden;
-  transition: 0.25s;
-  cursor: pointer;
-  border: 1px solid #f0f0f0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-}
-.product-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 12px 24px rgba(0,0,0,0.08);
-  border-color: #e0e0e0;
-}
-.product-img-wrapper {
-  position: relative;
-  background: #ffffff; 
-  padding: 0;
-  height: 220px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid #f1f5f9; 
-  overflow: hidden;
-}
-.product-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  transition: 0.3s;
-  mix-blend-mode: multiply; 
-}
-.product-card:hover .product-img {
-  transform: scale(1.02);
-}
-.product-badges {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  display: flex;
-  gap: 6px;
-}
-.badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 4px 8px;
-  border-radius: 30px;
-  text-transform: uppercase;
-}
-.badge.new {
-  background: #1a1a1a;
-  color: white;
-}
-.badge.used {
-  background: #f5e6d3;
-  color: #a1622f;
-}
-.quick-add {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: #1a1a1a;
-  color: white;
-  border: none;
-  padding: 12px;
+  border: 1.5px solid #e2e8f0;
+  padding: 8px 18px;
+  border-radius: 40px;
   font-size: 13px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  cursor: pointer;
-  transform: translateY(100%);
-  transition: 0.25s;
-  opacity: 0;
-}
-.product-card:hover .quick-add {
-  transform: translateY(0);
-  opacity: 1;
-}
-.product-info {
-  padding: 18px;
-}
-.product-brand {
-  font-size: 11px;
   font-weight: 700;
-  color: #6b6b6b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 6px;
-}
-.product-title {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
-  margin-bottom: 10px;
-  min-height: 40px;
-  color: #1a1a1a;
-}
-.product-specs {
-  background: #f8f8f8;
-  border-radius: 10px;
-  padding: 8px;
-  margin: 10px 0;
-  font-size: 12px;
-}
-.spec {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-.spec-label {
-  font-weight: 600;
-  color: #4a4a4a;
-}
-.product-price {
-  margin: 14px 0;
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-.price {
-  font-size: 20px;
-  font-weight: 800;
-  color: #1a1a1a;
-}
-.currency {
-  font-size: 12px;
-  font-weight: 500;
-  color: #6b6b6b;
-}
-.details-btn {
-  width: 100%;
-  background: transparent;
-  border: 1px solid #ddd;
-  border-radius: 30px;
-  padding: 8px;
-  font-size: 12px;
-  font-weight: 600;
+  color: #374151;
   cursor: pointer;
-  transition: 0.2s;
+  transition: .2s;
+  white-space: nowrap;
 }
-.details-btn:hover {
-  background: #1a1a1a;
-  color: white;
-  border-color: #1a1a1a;
-}
+.show-all-btn:hover { background: #111; color: #fff; border-color: #111; }
 
-/* Скелетон */
-.product-skeleton {
-  background: #fff;
-  border-radius: 20px;
-  overflow: hidden;
-  border: 1px solid #ececec;
-}
-.skeleton-img {
-  height: 220px;
-  background: #f0f0f0;
-}
-.skeleton-line {
-  height: 16px;
-  background: #f0f0f0;
-  margin: 12px;
+.overview-skeleton { display: flex; flex-direction: column; gap: 48px; }
+.section-skeleton { width: 100%; }
+.sk-title {
+  width: 200px; height: 24px; margin-bottom: 20px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%; animation: shimmer 1.4s infinite;
   border-radius: 8px;
 }
-.skeleton-line.short {
-  width: 60%;
+
+/* ── ТУЛБАР (режим категории) ── */
+.toolbar {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+}
+.toolbar-left { display: flex; align-items: center; gap: 10px; }
+.section-heading { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0; }
+.toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.state-select {
+  padding: 8px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 13px; font-weight: 600;
+  background: #fff; color: #374151; cursor: pointer;
+}
+.reset-btn {
+  background: none;
+  border: 1.5px solid #e2e8f0;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 12px; font-weight: 700; color: #64748b;
+  cursor: pointer; transition: .2s; white-space: nowrap;
+}
+.reset-btn:hover { border-color: #ef4444; color: #ef4444; }
+
+/* ── СКЕЛЕТОН ── */
+.skeleton-card { background: #fff; border-radius: 20px; overflow: hidden; border: 1px solid #f0f0f0; }
+.sk-img {
+  height: 220px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%; animation: shimmer 1.4s infinite;
+}
+.sk-line { height: 14px; background: #f0f0f0; margin: 14px 14px 0; border-radius: 8px; animation: shimmer 1.4s infinite; }
+.sk-line.short { width: 55%; margin-top: 8px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── СЕТКА ── */
+.products-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 20px;
+  margin-bottom: 10px;
 }
 
-/* Пагинация */
-.pagination {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
-  margin-top: 20px;
-  flex-wrap: wrap;
+/* ── КАРТОЧКА ── */
+.product-card {
+  background: #fff; border-radius: 20px; overflow: hidden;
+  border: 1.5px solid #f0f4f8; cursor: pointer; transition: .22s;
 }
-.page-btn, .page-number {
-  padding: 8px 16px;
-  border: 1px solid #ddd;
-  background: white;
-  border-radius: 40px;
-  cursor: pointer;
-  font-weight: 500;
-  transition: 0.2s;
+.product-card:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(0,0,0,.08); border-color: #e2e8f0; }
+.card-img-wrap {
+  position: relative; background: #f9fafb; height: 220px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; border-bottom: 1px solid #f1f5f9;
 }
-.page-btn:hover:not(:disabled), .page-number:hover {
-  background: #1a1a1a;
-  color: white;
-  border-color: #1a1a1a;
+.card-img { max-width: 90%; max-height: 90%; object-fit: contain; mix-blend-mode: multiply; transition: .25s; }
+.product-card:hover .card-img { transform: scale(1.03); }
+.card-badges { position: absolute; top: 10px; left: 10px; display: flex; gap: 5px; }
+.badge { font-size: 9px; font-weight: 800; padding: 3px 8px; border-radius: 40px; text-transform: uppercase; letter-spacing: .4px; }
+.badge.new  { background: #111; color: #fff; }
+.badge.used { background: #fef3c7; color: #92400e; }
+.quick-add {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: #111; color: #fff; border: none; padding: 11px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  transform: translateY(100%); opacity: 0; transition: .22s;
 }
-.page-number.active {
-  background: #1a1a1a;
-  color: white;
-  border-color: #1a1a1a;
+.product-card:hover .quick-add { transform: translateY(0); opacity: 1; }
+.card-info { padding: 16px; }
+.card-brand { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: #94a3b8; display: block; margin-bottom: 4px; }
+.card-name {
+  font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.4;
+  min-height: 40px; margin: 0 0 10px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.page-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.card-specs { background: #f8fafc; border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
+.spec-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.spec-row:last-child { margin-bottom: 0; }
+.spec-key { font-weight: 700; color: #475569; }
+.spec-val { color: #64748b; }
+.card-price { font-size: 19px; font-weight: 900; color: #0f172a; margin: 10px 0 12px; }
+.cur { font-size: 12px; font-weight: 500; color: #94a3b8; }
+.details-btn {
+  width: 100%; background: transparent; border: 1.5px solid #e2e8f0;
+  border-radius: 40px; padding: 8px; font-size: 12px; font-weight: 700;
+  cursor: pointer; color: #374151; transition: .2s;
+}
+.details-btn:hover { background: #111; color: #fff; border-color: #111; }
+
+/* ── ПУСТОЕ СОСТОЯНИЕ ── */
+.empty-state { text-align: center; padding: 80px 20px; background: #fff; border-radius: 24px; border: 1px solid #f0f0f0; }
+.empty-icon { font-size: 56px; margin-bottom: 16px; display: block; }
+.empty-state h3 { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 8px; }
+.empty-state p  { font-size: 14px; color: #94a3b8; margin: 0 0 24px; }
+.btn-reset-empty {
+  background: #111; color: #fff; border: none; padding: 12px 28px;
+  border-radius: 40px; font-size: 14px; font-weight: 700; cursor: pointer;
 }
 
-/* Уведомление */
+/* ── ПАГИНАЦИЯ ── */
+.pagination { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.pg-btn {
+  padding: 9px 20px; border: 1.5px solid #e2e8f0; background: #fff;
+  border-radius: 40px; font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: .2s; color: #374151;
+}
+.pg-btn:hover:not(:disabled) { background: #111; color: #fff; border-color: #111; }
+.pg-btn:disabled { opacity: .35; cursor: not-allowed; }
+.pg-num {
+  width: 38px; height: 38px; border: 1.5px solid #e2e8f0; background: #fff;
+  border-radius: 50%; font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: .2s; color: #374151;
+  display: flex; align-items: center; justify-content: center;
+}
+.pg-num:hover  { border-color: #111; color: #111; }
+.pg-num.active { background: #111; color: #fff; border-color: #111; }
+
+/* ── TOAST ── */
 .cart-toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  background: white;
-  border-left: 4px solid #1a1a1a;
-  border-radius: 16px;
-  padding: 14px 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-  z-index: 1000;
-  animation: slideUp 0.25s ease;
-  max-width: 360px;
+  position: fixed; bottom: 24px; right: 24px;
+  background: #fff; border-left: 4px solid #111;
+  border-radius: 16px; padding: 14px 20px;
+  display: flex; align-items: center; gap: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.12);
+  z-index: 1000; max-width: 340px;
 }
-.toast-icon {
-  background: #22c55e;
-  color: white;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
+.toast-check {
+  background: #22c55e; color: #fff; width: 26px; height: 26px;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px; flex-shrink: 0;
 }
-.toast-text p {
-  margin: 0;
-  font-size: 13px;
-  color: #4a4a4a;
-}
-.toast-link {
-  color: #1a1a1a;
-  font-weight: 600;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-  background: white;
-  border-radius: 24px;
-}
-.empty-icon {
-  font-size: 56px;
-  margin-bottom: 16px;
-}
-.btn-empty {
-  background: #1a1a1a;
-  color: white;
-  border: none;
-  padding: 10px 24px;
-  border-radius: 40px;
-  margin-top: 20px;
-  cursor: pointer;
-  font-weight: 600;
-}
+.toast-body { flex: 1; }
+.toast-body strong { font-size: 13px; color: #0f172a; }
+.toast-body p { margin: 2px 0 0; font-size: 12px; color: #94a3b8; }
+.toast-link { font-size: 12px; font-weight: 700; color: #111; white-space: nowrap; text-decoration: none; }
+.toast-enter-active, .toast-leave-active { transition: .25s; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(20px); }
 
-@keyframes slideUp {
-  from { transform: translateY(30px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
+/* ── АНИМАЦИЯ БРЕНДОВ ── */
+.slide-down-enter-active, .slide-down-leave-active { transition: .25s ease; }
+.slide-down-enter-from, .slide-down-leave-to { opacity: 0; transform: translateY(-8px); }
 
+/* ── RESPONSIVE ── */
 @media (max-width: 768px) {
-  .products-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 16px;
-  }
-  .product-img-wrapper {
-    height: 160px;
-  }
-  .categories-scroll, .brands-scroll {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 8px;
-    justify-content: flex-start; 
-  }
-  .filters-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .reset-all-btn {
-    align-self: flex-start;
-  }
+  .products-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .card-img-wrap { height: 160px; }
+  .toolbar { flex-direction: column; align-items: flex-start; }
+  .toolbar-right { width: 100%; }
+}
+@media (max-width: 420px) {
+  .products-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .cat-tab { min-width: 68px; padding: 10px 12px; }
+  .tab-label { font-size: 11px; }
 }
 </style>
