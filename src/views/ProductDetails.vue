@@ -12,7 +12,6 @@ const router = useRouter()
 const authStore = useAuthStore()
 const cartStore = useCartStore()
 
-// Делаем id реактивным вычисляемым свойством, чтобы работал переход между товарами
 const productId = computed(() => route.params.productId)
 
 const product = ref(null)
@@ -21,7 +20,6 @@ const errorMsg = ref('')
 const activeImage = ref('')
 const addedToCart = ref(false)
 
-// Состояния для подходящих товаров
 const relatedProducts = ref([])
 const relatedLoading = ref(false)
 
@@ -40,7 +38,6 @@ const fetchProductDetails = async () => {
       activeImage.value = ''
     }
 
-    // ВОЗВРАЩАЕМ: Поиск сопутствующих товаров по названию текущего устройства
     await fetchRelatedProducts(product.value.name)
   } catch (err) {
     errorMsg.value = 'Не удалось загрузить товар.'
@@ -50,20 +47,14 @@ const fetchProductDetails = async () => {
   }
 }
 
-// Поиск подходящих аксессуаров/товаров по названию текущего устройства
 const fetchRelatedProducts = async (productName) => {
   if (!productName) return
   relatedLoading.value = true
   try {
-    // Стучимся на стандартный GET api/products с параметром search
     const response = await api.get('/api/products', {
       params: { search: productName, pageSize: 6 }
     })
-    
-    // ИСПРАВЛЕНО: Безопасный разбор PagedResult с бэкенда (учитываем разный регистр)
     const items = response.data.items || response.data.Items || response.data || []
-    
-    // Исключаем сам текущий телефон из списка рекомендаций аксессуаров
     relatedProducts.value = items.filter(p => p.id !== Number(productId.value))
   } catch (err) {
     console.error('Ошибка загрузки подходящих товаров:', err)
@@ -75,7 +66,6 @@ const fetchRelatedProducts = async (productName) => {
 
 const handleDelete = async () => {
   if (!confirm('Удалить этот товар из каталога?')) return
-
   try {
     await api.delete(`/api/products/${productId.value}`)
     router.push('/')
@@ -88,25 +78,17 @@ const handleAddToCart = () => {
   if (!product.value) return
   cartStore.addItem(product.value)
   addedToCart.value = true
-  setTimeout(() => {
-    addedToCart.value = false
-  }, 2500)
+  setTimeout(() => { addedToCart.value = false }, 2500)
 }
 
-// Быстрое добавление сопутствующего товара в корзину прямо из ленты рекомендаций
 const handleAddRelatedToCart = (item, event) => {
-  event.stopPropagation() // Чтобы не срабатывал клик по карточке (переход на страницу)
+  event.stopPropagation()
   cartStore.addItem(item)
   alert(`Товар "${item.name}" добавлен в корзину!`)
 }
 
-const onImagesUpdated = async () => {
-  await fetchProductDetails()
-}
-
-const setActiveImage = (url) => {
-  activeImage.value = url
-}
+const onImagesUpdated = async () => { await fetchProductDetails() }
+const setActiveImage = (url) => { activeImage.value = url }
 
 const allImages = () => {
   if (!product.value) return []
@@ -118,21 +100,20 @@ const allImages = () => {
   return urls
 }
 
-// СЛЕДИМ ЗА ИЗМЕНЕНИЕМ ID: Теперь при переходе на другой товар всё сбросится и перезагрузится заново
 watch(productId, () => {
-  relatedProducts.value = [] // Чистим старые рекомендации перед загрузкой, чтобы не было мерцания
+  relatedProducts.value = []
   fetchProductDetails()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 })
 
-onMounted(() => {
-  fetchProductDetails()
-})
+onMounted(() => { fetchProductDetails() })
+
+const formatPrice = (p) => Number(p).toLocaleString('ru-RU')
 </script>
 
 <template>
   <div class="product-page">
-    <button @click="router.push('/')" class="btn-back">← Назад в каталог</button>
+    <button @click="router.push('/catalog')" class="btn-back">← Назад в каталог</button>
 
     <div v-if="loading" class="loading-state">
       <div class="spinner"></div>
@@ -141,19 +122,20 @@ onMounted(() => {
 
     <div v-if="errorMsg" class="error-banner">{{ errorMsg }}</div>
 
-    <div v-if="addedToCart" class="success-banner">
-      ✅ Товар добавлен в корзину!
-      <router-link to="/cart" class="cart-link">Перейти в корзину →</router-link>
-    </div>
+    <transition name="fade-slide">
+      <div v-if="addedToCart" class="success-banner">
+        <span class="success-check">✓</span>
+        Товар добавлен в корзину!
+        <router-link to="/cart" class="cart-link">Перейти в корзину →</router-link>
+      </div>
+    </transition>
 
     <div v-if="product && !loading" class="product-layout">
+
+      <!-- ═══════════ ГАЛЕРЕЯ ═══════════ -->
       <div class="gallery-section">
         <div class="main-image-wrap">
-          <img
-            :src="getFullImageUrl(activeImage)"
-            :alt="product.name"
-            class="main-image"
-          />
+          <img :src="getFullImageUrl(activeImage)" :alt="product.name" class="main-image" />
           <span v-if="product.isUsed" class="condition-badge used">Б/У</span>
           <span v-else class="condition-badge new">Новый</span>
         </div>
@@ -172,41 +154,31 @@ onMounted(() => {
         </div>
       </div>
 
+      <!-- ═══════════ ИНФОРМАЦИЯ ═══════════ -->
       <div class="info-section">
         <span class="brand-tag">{{ product.brandName || 'PLANETA' }}</span>
         <h1>{{ product.name }}</h1>
         <p class="category-line">{{ product.categoryName }}</p>
 
         <div class="price-block">
-          <span class="price">{{ Number(product.price).toLocaleString() }}</span>
+          <span class="price">{{ formatPrice(product.price) }}</span>
           <span class="currency">сом</span>
         </div>
 
-        <p class="description">
-          {{ product.description || 'Описание для данного товара пока не добавлено.' }}
-        </p>
+        <div class="cart-actions">
+          <button @click="handleAddToCart" class="btn-add-cart">🛒 В корзину</button>
+          <button @click="router.push('/cart')" class="btn-go-cart">Перейти в корзину</button>
+        </div>
 
+        <!-- ХАРАКТЕРИСТИКИ — сразу после цены/кнопок -->
         <div v-if="product.attributes?.length" class="specs-card">
           <h3>Характеристики</h3>
           <div class="specs-grid">
-            <div
-              v-for="(attr, index) in product.attributes"
-              :key="index"
-              class="spec-row"
-            >
+            <div v-for="(attr, index) in product.attributes" :key="index" class="spec-row">
               <span class="spec-name">{{ attr.attributeName }}</span>
               <span class="spec-value">{{ attr.value }}</span>
             </div>
           </div>
-        </div>
-
-        <div class="cart-actions">
-          <button @click="handleAddToCart" class="btn-add-cart">
-            🛒 В корзину
-          </button>
-          <button @click="router.push('/cart')" class="btn-go-cart">
-            Перейти в корзину
-          </button>
         </div>
 
         <div
@@ -219,10 +191,7 @@ onMounted(() => {
           </div>
 
           <div class="admin-actions">
-            <button
-              @click="router.push(`/admin/edit-product/${product.id}`)"
-              class="btn-edit"
-            >
+            <button @click="router.push(`/admin/edit-product/${product.id}`)" class="btn-edit">
               ✏️ Редактировать
             </button>
             <button @click="handleDelete" class="btn-delete">
@@ -230,29 +199,36 @@ onMounted(() => {
             </button>
           </div>
 
-          <ProductImageManager
-            :product-id="product.id"
-            @updated="onImagesUpdated"
-          />
+          <ProductImageManager :product-id="product.id" @updated="onImagesUpdated" />
         </div>
       </div>
+
+      <!-- ═══════════ ОПИСАНИЕ — на всю ширину, внизу ═══════════ -->
+      <div class="description-section">
+        <h3 class="description-heading">Описание</h3>
+        <p class="description">
+          {{ product.description || 'Описание для данного товара пока не добавлено.' }}
+        </p>
+      </div>
+
     </div>
 
+    <!-- ═══════════ РЕКОМЕНДАЦИИ ═══════════ -->
     <div v-if="!loading && product && relatedProducts.length > 0" class="related-section">
       <h2 class="related-heading">С этим устройством так же покупают</h2>
       <p class="related-subheading">Аксессуары и сопутствующие товары, совместимые с {{ product.name }}</p>
-      
+
       <div class="related-grid">
-        <div 
-          v-for="item in relatedProducts" 
-          :key="item.id" 
+        <div
+          v-for="item in relatedProducts"
+          :key="item.id"
           class="related-card"
           @click="router.push(`/products/${item.id}`)"
         >
           <div class="related-img-wrap">
-            <img 
-              :src="getFullImageUrl(item.mainImageUrl || item.imageUrls?.[0])" 
-              :alt="item.name" 
+            <img
+              :src="getFullImageUrl(item.mainImageUrl || item.imageUrls?.[0])"
+              :alt="item.name"
               class="related-img"
             />
             <span v-if="item.isUsed" class="related-condition-badge">Б/У</span>
@@ -262,11 +238,11 @@ onMounted(() => {
             <h4 class="related-title">{{ item.name }}</h4>
             <div class="related-footer">
               <div class="related-price-block">
-                <span class="related-price">{{ Number(item.price).toLocaleString() }}</span>
+                <span class="related-price">{{ formatPrice(item.price) }}</span>
                 <span class="related-currency">сом</span>
               </div>
-              <button 
-                @click.stop="handleAddRelatedToCart(item, $event)" 
+              <button
+                @click.stop="handleAddRelatedToCart(item, $event)"
                 class="related-add-cart-btn"
                 title="Добавить в корзину"
               >
@@ -285,479 +261,339 @@ onMounted(() => {
   max-width: 1100px;
   margin: 0 auto;
   padding-bottom: 60px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* ── НАЗАД ── */
 .btn-back {
-  background: white;
-  border: 1px solid var(--planet-border, #ddd);
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
   padding: 9px 18px;
-  border-radius: 10px;
+  border-radius: 40px;
   cursor: pointer;
-  font-weight: 500;
-  font-size: 14px;
-  margin-bottom: 20px;
-  transition: 0.2s;
+  font-weight: 700;
+  font-size: 13px;
+  color: #374151;
+  margin-bottom: 24px;
+  transition: .2s;
 }
+.btn-back:hover { border-color: #111; color: #111; }
 
-.btn-back:hover {
-  border-color: var(--planet-primary, #1a1a1a);
-  color: var(--planet-primary, #1a1a1a);
-}
-
+/* ── СОСТОЯНИЯ ── */
 .loading-state {
   text-align: center;
-  padding: 80px 20px;
-  background: white;
-  border-radius: var(--planet-radius, 20px);
-  box-shadow: var(--planet-shadow, 0 4px 12px rgba(0,0,0,0.05));
+  padding: 100px 20px;
+  background: #fff;
+  border-radius: 24px;
+  border: 1px solid #f0f0f0;
 }
-
 .spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #ede9fe;
-  border-top-color: var(--planet-primary, #1a1a1a);
+  width: 40px; height: 40px;
+  border: 3px solid #f1f5f9;
+  border-top-color: #111;
   border-radius: 50%;
   margin: 0 auto 16px;
-  animation: spin 0.8s linear infinite;
+  animation: spin .8s linear infinite;
 }
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .error-banner {
   background: #fef2f2;
   color: #dc2626;
   padding: 14px 18px;
-  border-radius: 12px;
+  border-radius: 16px;
   border: 1px solid #fecaca;
   margin-bottom: 20px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .success-banner {
-  background: #f0fdf4;
-  color: #166534;
-  padding: 14px 18px;
-  border-radius: 12px;
-  border: 1px solid #bbf7d0;
-  margin-bottom: 20px;
-  font-weight: 500;
+  background: #0f172a;
+  color: #fff;
+  padding: 14px 20px;
+  border-radius: 16px;
+  margin-bottom: 24px;
+  font-weight: 600;
+  font-size: 14px;
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
 }
-
-.cart-link {
-  color: var(--planet-primary, #1a1a1a);
-  font-weight: 600;
+.success-check {
+  background: #22c55e;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800; flex-shrink: 0;
 }
+.cart-link { color: #fff; font-weight: 800; text-decoration: underline; margin-left: auto; }
+.fade-slide-enter-active, .fade-slide-leave-active { transition: .25s ease; }
+.fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateY(-8px); }
 
+/* ── ОСНОВНАЯ СЕТКА ── */
 .product-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 32px;
-  background: white;
-  border-radius: 20px;
-  padding: 32px;
-  box-shadow: var(--planet-shadow, 0 4px 12px rgba(0,0,0,0.05));
-  border: 1px solid var(--planet-border, #f0f0f0);
+  background: #fff;
+  border-radius: 28px;
+  padding: 36px;
+  border: 1.5px solid #f0f4f8;
   margin-bottom: 40px;
 }
 
+/* ── ГАЛЕРЕЯ ── */
 .main-image-wrap {
   position: relative;
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 24px;
+  background: #f9fafb;
+  border-radius: 20px;
+  padding: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 360px;
   border: 1px solid #f1f5f9;
 }
-
 .main-image {
   max-width: 100%;
   max-height: 340px;
   object-fit: contain;
   mix-blend-mode: multiply;
 }
-
 .condition-badge {
   position: absolute;
-  top: 14px;
-  left: 14px;
-  font-size: 12px;
-  font-weight: 700;
+  top: 16px; left: 16px;
+  font-size: 11px;
+  font-weight: 800;
   padding: 5px 12px;
-  border-radius: 999px;
+  border-radius: 40px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
 }
-
-.condition-badge.new { background: #dcfce7; color: #166534; }
+.condition-badge.new { background: #111; color: #fff; }
 .condition-badge.used { background: #fef3c7; color: #92400e; }
 
-.thumbnails {
-  display: flex;
-  gap: 10px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-
+.thumbnails { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .thumb-btn {
-  width: 72px;
-  height: 72px;
-  padding: 4px;
-  border: 2px solid var(--planet-border, #ddd);
-  border-radius: 10px;
-  background: white;
+  width: 70px; height: 70px;
+  padding: 3px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
   cursor: pointer;
   overflow: hidden;
-  transition: 0.2s;
+  transition: .2s;
 }
+.thumb-btn.active { border-color: #111; box-shadow: 0 0 0 3px rgba(17,17,17,.08); }
+.thumb-btn img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; }
 
-.thumb-btn.active {
-  border-color: var(--planet-primary, #1a1a1a);
-  box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.15);
-}
-
-.thumb-btn img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 6px;
-}
-
+/* ── ИНФОБЛОК ── */
 .brand-tag {
   display: inline-block;
-  background: #f5f3ff;
-  color: var(--planet-primary, #1a1a1a);
-  font-size: 12px;
-  font-weight: 700;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  margin-bottom: 10px;
+  letter-spacing: .6px;
+  padding: 5px 13px;
+  border-radius: 40px;
+  margin-bottom: 12px;
 }
-
 .info-section h1 {
   margin: 0 0 6px;
-  font-size: 28px;
+  font-size: 26px;
+  font-weight: 800;
   line-height: 1.25;
-  color: #1a1a1a;
+  color: #0f172a;
 }
-
-.category-line {
-  margin: 0 0 20px;
-  color: var(--planet-muted, #6b6b6b);
-  font-size: 14px;
-}
+.category-line { margin: 0 0 20px; color: #94a3b8; font-size: 13px; }
 
 .price-block {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  margin-bottom: 20px;
-}
-
-.price {
-  font-size: 36px;
-  font-weight: 800;
-  color: #059669;
-}
-
-.currency {
-  font-size: 18px;
-  color: var(--planet-muted, #6b6b6b);
-}
-
-.description {
-  color: #4b5563;
-  line-height: 1.7;
-  margin: 0 0 24px;
-}
-
-.specs-card {
-  background: #fafafa;
-  border: 1px solid var(--planet-border, #f0f0f0);
-  border-radius: 14px;
-  padding: 18px 20px;
   margin-bottom: 24px;
 }
+.price { font-size: 34px; font-weight: 900; color: #0f172a; }
+.currency { font-size: 16px; color: #94a3b8; font-weight: 600; }
 
-.specs-card h3 {
-  margin: 0 0 14px;
+/* ── КНОПКИ ── */
+.cart-actions { display: flex; gap: 10px; margin-bottom: 28px; }
+.btn-add-cart {
+  flex: 1;
+  background: #111;
+  color: #fff;
+  border: none;
+  padding: 16px;
   font-size: 15px;
-  color: #1a1a1a;
+  font-weight: 800;
+  border-radius: 40px;
+  cursor: pointer;
+  transition: .2s;
 }
+.btn-add-cart:hover { background: #000; transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0,0,0,.15); }
+.btn-go-cart {
+  flex: 0 0 auto;
+  background: #fff;
+  color: #111;
+  border: 1.5px solid #e2e8f0;
+  padding: 16px 22px;
+  border-radius: 40px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: .2s;
+}
+.btn-go-cart:hover { border-color: #111; }
 
+/* ── ХАРАКТЕРИСТИКИ ── */
+.specs-card {
+  background: #f8fafc;
+  border: 1px solid #f0f4f8;
+  border-radius: 20px;
+  padding: 22px 24px;
+}
+.specs-card h3 {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
 .spec-row {
   display: flex;
   justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px dashed #e5e7eb;
+  padding: 10px 0;
+  border-bottom: 1px dashed #e2e8f0;
+  font-size: 13px;
+}
+.spec-row:last-child { border-bottom: none; padding-bottom: 0; }
+.spec-name { color: #94a3b8; font-weight: 500; }
+.spec-value { font-weight: 700; color: #0f172a; }
+
+/* ── ОПИСАНИЕ — на всю ширину снизу ── */
+.description-section {
+  grid-column: 1 / -1;
+  border-top: 1px solid #f0f4f8;
+  padding-top: 28px;
+  margin-top: 4px;
+}
+.description-heading {
   font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin: 0 0 14px;
 }
-
-.spec-row:last-child { border-bottom: none; }
-.spec-name { color: var(--planet-muted, #6b6b6b); }
-.spec-value { font-weight: 600; color: #1a1a1a; }
-
-.cart-actions {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.btn-add-cart {
-  flex: 1;
-  background: #1a1a1a;
-  color: white;
-  border: none;
-  padding: 16px;
-  font-size: 16px;
-  font-weight: 700;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: 0.2s;
-}
-
-.btn-add-cart:hover {
-  background: #000;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.15);
-}
-
-.btn-go-cart {
-  flex: 0 0 auto;
-  background: #f5f5f5;
-  color: #1a1a1a;
-  border: 1px solid #ddd;
-  padding: 16px 20px;
-  border-radius: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: 0.2s;
-}
-.btn-go-cart:hover {
-  background: #e0e0e0;
-}
-
-.admin-panel {
-  margin-top: 28px;
-  padding: 20px;
-  background: linear-gradient(135deg, #fffbeb, #fef3c7);
-  border: 1px solid #fde68a;
-  border-radius: 14px;
-}
-
-.admin-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.admin-header h3 {
+.description {
+  color: #475569;
+  line-height: 1.75;
+  font-size: 14px;
   margin: 0;
-  font-size: 15px;
-  color: #92400e;
+  max-width: 720px;
 }
 
-.admin-actions {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
+/* ── АДМИН-ПАНЕЛЬ ── */
+.admin-panel {
+  margin-top: 24px;
+  padding: 20px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 20px;
 }
-
+.admin-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.admin-header h3 { margin: 0; font-size: 14px; font-weight: 800; color: #92400e; }
+.admin-actions { display: flex; gap: 10px; margin-bottom: 16px; }
 .btn-edit {
-  background: #3b82f6;
-  color: white;
-  border: none;
-  padding: 9px 16px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
-  transition: 0.2s;
+  background: #2563eb; color: #fff; border: none;
+  padding: 9px 16px; border-radius: 40px; cursor: pointer;
+  font-weight: 700; font-size: 13px; transition: .2s;
 }
-.btn-edit:hover { background: #2563eb; }
-
+.btn-edit:hover { background: #1d4ed8; }
 .btn-delete {
-  background: #ef4444;
-  color: white;
-  border: none;
-  padding: 9px 16px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
-  transition: 0.2s;
+  background: #ef4444; color: #fff; border: none;
+  padding: 9px 16px; border-radius: 40px; cursor: pointer;
+  font-weight: 700; font-size: 13px; transition: .2s;
 }
 .btn-delete:hover { background: #dc2626; }
 
-/* СТИЛИ ДЛЯ БЛОКА РЕКОМЕНДАЦИЙ */
+/* ── РЕКОМЕНДАЦИИ ── */
 .related-section {
   margin-top: 40px;
-  background: #ffffff;
-  border-radius: 20px;
-  padding: 32px;
-  border: 1px solid var(--planet-border, #f0f0f0);
-  box-shadow: var(--planet-shadow, 0 4px 12px rgba(0,0,0,0.05));
+  background: #fff;
+  border-radius: 28px;
+  padding: 36px;
+  border: 1.5px solid #f0f4f8;
 }
-
-.related-heading {
-  font-size: 22px;
-  font-weight: 800;
-  margin: 0 0 6px 0;
-  color: #1a1a1a;
-}
-
-.related-subheading {
-  font-size: 14px;
-  color: #6b6b6b;
-  margin: 0 0 24px 0;
-}
+.related-heading { font-size: 21px; font-weight: 800; margin: 0 0 6px; color: #0f172a; }
+.related-subheading { font-size: 13px; color: #94a3b8; margin: 0 0 24px; }
 
 .related-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 20px;
+  gap: 18px;
 }
-
 .related-card {
   background: #fff;
-  border: 1px solid #f0f0f0;
-  border-radius: 16px;
+  border: 1.5px solid #f0f4f8;
+  border-radius: 18px;
   overflow: hidden;
   cursor: pointer;
-  transition: 0.2s ease-in-out;
+  transition: .22s;
   display: flex;
   flex-direction: column;
 }
-
 .related-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-  border-color: #ddd;
+  box-shadow: 0 12px 28px rgba(0,0,0,.08);
+  border-color: #e2e8f0;
 }
-
 .related-img-wrap {
   position: relative;
   height: 150px;
-  background: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #f9fafb;
+  display: flex; align-items: center; justify-content: center;
   padding: 12px;
-  border-bottom: 1px solid #f8fafc;
+  border-bottom: 1px solid #f1f5f9;
 }
-
-.related-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  mix-blend-mode: multiply;
-}
-
+.related-img { max-width: 100%; max-height: 100%; object-fit: contain; mix-blend-mode: multiply; }
 .related-condition-badge {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.related-info {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-}
-
-.related-brand {
-  font-size: 10px;
-  font-weight: 700;
-  color: #94a3b8;
+  position: absolute; top: 8px; left: 8px;
+  background: #fef3c7; color: #92400e;
+  font-size: 9px; font-weight: 800;
+  padding: 3px 7px; border-radius: 40px;
   text-transform: uppercase;
-  margin-bottom: 4px;
 }
-
+.related-info { padding: 14px; display: flex; flex-direction: column; flex: 1; }
+.related-brand { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
 .related-title {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
-  color: #1a1a1a;
-  margin: 0 0 12px 0;
-  min-height: 36px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-size: 13px; font-weight: 700; line-height: 1.4; color: #0f172a;
+  margin: 0 0 12px; min-height: 36px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-
-.related-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: auto;
-}
-
-.related-price {
-  font-size: 15px;
-  font-weight: 800;
-  color: #059669;
-}
-
-.related-currency {
-  font-size: 11px;
-  color: #6b6b6b;
-  margin-left: 2px;
-}
-
+.related-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
+.related-price { font-size: 15px; font-weight: 900; color: #0f172a; }
+.related-currency { font-size: 11px; color: #94a3b8; margin-left: 2px; }
 .related-add-cart-btn {
-  background: #f1f5f9;
-  border: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 13px;
-  transition: 0.2s;
+  background: #f1f5f9; border: none;
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 13px; transition: .2s;
 }
+.related-add-cart-btn:hover { background: #111; transform: scale(1.05); }
 
-.related-add-cart-btn:hover {
-  background: #1a1a1a;
-  transform: scale(1.05);
-}
-
+/* ── RESPONSIVE ── */
 @media (max-width: 800px) {
-  .product-layout {
-    grid-template-columns: 1fr;
-    padding: 20px;
-  }
-
-  .cart-actions {
-    flex-direction: column;
-  }
-  
-  .related-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px;
-  }
-  
-  .related-section {
-    padding: 20px;
-  }
+  .product-layout { grid-template-columns: 1fr; padding: 22px; }
+  .description-section { grid-column: auto; }
+  .cart-actions { flex-direction: column; }
+  .related-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+  .related-section { padding: 22px; }
 }
 </style>
