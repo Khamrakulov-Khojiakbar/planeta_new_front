@@ -11,7 +11,6 @@ const cartStore = useCartStore()
 // ──────────────────────────────────────────────
 // Данные
 // ──────────────────────────────────────────────
-const heroProducts = ref([])       // Дополнительные флагманы справа (если придут из API)
 const watchProducts = ref([])      // Смарт-часы
 const chargerProducts = ref([])    // Зарядные устройства
 const topProducts = ref([])        // Топовые товары
@@ -48,12 +47,8 @@ const addToCart = (product, event) => {
 // Init
 // ──────────────────────────────────────────────
 onMounted(async () => {
-  const [cats, hero, watches, chargers, top] = await Promise.all([
+  const [cats, watches, chargers, top] = await Promise.all([
     api.get('/api/getcategories').then(r => r.data || []).catch(() => []),
-    fetchSection('S26 Ultra', 2).then(items => {
-      if (items.length < 2) return fetchSection('iPhone 17', 2)
-      return items
-    }),
     fetchSection('смарт-час', 6),
     fetchSection('зарядн', 6),
     api.get('/api/products', { params: { pageNumber: 1, pageSize: 8, sortBy: 'price', sortDesc: true } })
@@ -61,15 +56,6 @@ onMounted(async () => {
   ])
 
   categories.value = cats
-
-  // Hero-справа: пробуем S26 + 17 Pro по отдельности
-  const [s26, iphone] = await Promise.all([
-    fetchSection('S26', 1),
-    fetchSection('17 Pro', 1)
-  ])
-  heroProducts.value = [...s26, ...iphone].slice(0, 2)
-  if (heroProducts.value.length === 0) heroProducts.value = hero.slice(0, 2)
-
   watchProducts.value = watches
   chargerProducts.value = chargers
   topProducts.value = top
@@ -129,34 +115,6 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
           <button class="btn-dark" @click="goToCatalog('смартфон')">Смотреть все смартфоны →</button>
           <button class="btn-ghost" @click="router.push('/catalog')">Весь каталог</button>
         </div>
-      </div>
-
-      <div class="hero-right">
-        <div v-if="heroProducts.length" class="hero-cards">
-          <div
-            v-for="p in heroProducts"
-            :key="p.id"
-            class="hero-product-card"
-            @click="router.push(`/products/${p.id}`)"
-          >
-            <div class="hero-img-wrap">
-              <img :src="getImg(p)" :alt="p.name" class="hero-img" />
-            </div>
-            <div class="hero-product-info">
-              <span class="hero-brand">{{ p.brandName }}</span>
-              <h3 class="hero-product-name">{{ p.name }}</h3>
-              <div class="hero-price">
-                <strong>{{ formatPrice(p.price) }}</strong>
-                <span class="cur"> сом</span>
-              </div>
-              <button class="btn-dark small" @click.stop="addToCart(p, $event)">
-                🛒 В корзину
-              </button>
-            </div>
-          </div>
-        </div>
-
-        
       </div>
     </section>
 
@@ -324,10 +282,6 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
   transition: .2s;
   white-space: nowrap;
 }
-
-
-.hero
-
 .btn-dark:hover { background: #000; transform: translateY(-1px); }
 .btn-dark.small { padding: 9px 18px; font-size: 13px; width: 100%; }
 .btn-ghost {
@@ -344,20 +298,19 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
 .btn-ghost:hover { background: #111; color: #fff; }
 
 /* ── HERO ── */
-
 .hero-left {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
   width: 100%;
-  max-width: 800px; /* Ограничиваем общую ширину текстового блока и кнопок */
+  max-width: 800px;
 }
 
 .hero-section {
   display: flex;
   flex-direction: column;
-  align-items: center;      /* Выравнивает дочерние элементы по центру */
+  align-items: center;
   justify-content: center;
   gap: 40px;
   padding: 48px 0 64px;
@@ -384,7 +337,7 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
   color: #0f172a;
   line-height: 1.15;
   margin: 0 0 12px;
-  text-align: center; /* Гарантирует центрирование строк заголовка */
+  text-align: center;
 }
 .hero-grad {
   background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
@@ -397,11 +350,11 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
   color: #64748b;
   margin: 0 0 24px;
   line-height: 1.5;
-  max-width: 600px;   /* Ограничим ширину, чтобы длинный текст по центру смотрелся аккуратно */
+  max-width: 600px;
 }
 .hero-btns { 
   display: flex; 
-  justify-content: center; /* Было gap: 12px; flex-wrap: wrap... Добавляем этот пункт */
+  justify-content: center;
   gap: 12px; 
   flex-wrap: wrap; 
   margin-top: 24px; 
@@ -413,7 +366,7 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
   gap: 16px;
   margin-bottom: 16px;
   width: 100%;
-  max-width: 900px; /* Контролируем ширину плашек с телефонами */
+  max-width: 900px;
 }
 .promo-banner-card {
   position: relative;
@@ -473,68 +426,6 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
   font-weight: 600;
   opacity: 0.8;
   text-decoration: underline;
-}
-
-.hero-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-.hero-product-card {
-  background: #fff;
-  border: 1.5px solid #e8edf2;
-  border-radius: 24px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: .25s;
-}
-.hero-product-card:hover {
-  border-color: #2563eb;
-  transform: translateY(-4px);
-  box-shadow: 0 16px 40px rgba(37,99,235,.1);
-}
-.hero-img-wrap {
-  background: #f8fafc;
-  height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-.hero-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  mix-blend-mode: multiply;
-}
-.hero-product-info { padding: 16px; }
-.hero-brand {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .8px;
-  color: #94a3b8;
-  display: block;
-  margin-bottom: 4px;
-}
-.hero-product-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: #0f172a;
-  margin: 0 0 10px;
-  line-height: 1.4;
-  min-height: 36px;
-}
-.hero-price { font-size: 18px; font-weight: 900; color: #0f172a; margin-bottom: 12px; }
-
-/* Скелетоны hero */
-.hero-skeleton-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.hero-skeleton {
-  background: #fff;
-  border: 1px solid #f0f0f0;
-  border-radius: 24px;
-  overflow: hidden;
-  padding-bottom: 16px;
 }
 
 /* ── ОБЩИЙ БЛОК ── */
@@ -741,18 +632,14 @@ const getImg = (p) => getFullImageUrl(p.mainImageUrl || p.imageUrls?.[0])
 
 /* ── RESPONSIVE ── */
 @media (max-width: 992px) {
-  .hero-section { grid-template-columns: 1fr; gap: 32px; }
+  .hero-section { gap: 32px; }
 }
 @media (max-width: 640px) {
   .hero-banners-grid { grid-template-columns: 1fr; }
-  .hero-cards, .hero-skeleton-row { grid-template-columns: 1fr 1fr; }
   .product-row, .top-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .charger-row { grid-template-columns: 1fr; }
   .card-img-wrap { height: 150px; }
   .dark-inner { padding: 32px 20px; }
   .dark-section { border-radius: 20px; }
-}
-@media (max-width: 400px) {
-  .hero-cards, .hero-skeleton-row { grid-template-columns: 1fr; }
 }
 </style>
